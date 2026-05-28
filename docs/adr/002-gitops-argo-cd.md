@@ -8,7 +8,7 @@ Accepted — 2026-05-28.
 
 The platform needs a GitOps controller — a cluster-resident agent that reads desired state from Git and reconciles the cluster to match. This decision is load-bearing for Phases 3, 5, and 6: it is the surface against which the CI pipeline writes deployments, the progressive-delivery controller integrates, and the audit/forensic story in [threat-model.md](../threat-model.md) lives.
 
-GitOps replaces the current Ahoy push-based deploy (`aws ssm send-command` from GitHub Actions, [threat-model.md §B8](../threat-model.md)) with a pull-based model: CI no longer holds cluster-write credentials. The cluster watches a config repository and applies whatever is there. Compromising CI compromises the image registry; it does not compromise the cluster directly.
+GitOps replaces the Ahoy-incident-state push-based deploy pattern (`aws ssm send-command` from GitHub Actions, [threat-model.md §B8](../threat-model.md)) with a pull-based model: CI no longer holds cluster-write credentials. The cluster watches a config repository and applies whatever is there. Compromising CI compromises the image registry; it does not compromise the cluster directly.
 
 Constraints driving this decision:
 
@@ -24,7 +24,7 @@ We will use **Argo CD**, deployed in-cluster, in a dedicated `argocd` namespace.
 
 Deployment pattern: **two repositories** —
 
-- **App repo** — Ahoy source code (backend, storefront, dashboard), Dockerfiles, CI workflows. CI builds and pushes images to the registry.
+- **App repo** (`ahoy-app`) — Go workload source (`orderd`, `reconcilerd`, `payments-mock`; see [ADR-006](006-workload-go-shim.md)), Dockerfiles, CI workflows. CI builds and pushes images to the registry.
 - **Config repo** — Kubernetes manifests, Helm chart values, ApplicationSet definitions, image-digest pins. CI also writes a Pull Request to this repo bumping image digests after a successful build; merge triggers Argo CD to apply.
 
 Argo CD watches the config repo, verifies signed commits, and reconciles the cluster to match. Drift is auto-corrected (or alerted, depending on the Application's `syncPolicy`).
@@ -35,7 +35,7 @@ Argo CD watches the config repo, verifies signed commits, and reconciles the clu
 - **Argo CD hub-and-spoke (single Argo CD managing many clusters).** Deferred, not rejected. Phase 1 has one cluster; running Argo CD in-cluster minimizes blast radius from a control-plane compromise. If multi-cluster materializes, an ApplicationSet pattern on a dedicated management cluster is the upgrade path.
 - **Single-repo (app + manifests together).** Rejected. Every code commit becomes a deployment commit; you cannot revert a deployment without reverting code, and break-glass deploys (hand-edit the manifest) become impossible without touching app source. The two-repo pattern is what makes "roll back deploy without rolling back code" a routine operation.
 - **Manual `kubectl apply` (no GitOps).** Rejected. Defeats the purpose of the platform — no audit, no review, no drift detection, no rollback. Mentioned only to make the pull-based design explicit.
-- **Push-based CI deploy (the current Ahoy pattern: `aws ssm send-command`).** Rejected. The threat model B8 walk shows the consequences: CI holds production credentials, the deploy is a side effect of CI rather than a reviewable artifact, and there is no continuous reconciliation. Replacing this pattern is one of the explicit goals of the platform.
+- **Push-based CI deploy (the Ahoy-incident-state pattern: `aws ssm send-command`).** Rejected. The threat model B8 walk shows the consequences: CI holds production credentials, the deploy is a side effect of CI rather than a reviewable artifact, and there is no continuous reconciliation. Replacing this pattern is one of the explicit goals of the platform.
 
 ## Consequences
 

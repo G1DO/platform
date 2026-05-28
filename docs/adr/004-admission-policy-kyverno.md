@@ -61,7 +61,7 @@ The Phase 1 policies, each closing a specific threat-model row.
 | Policy | Type | Closes |
 |---|---|---|
 | `verify-images-cosign` | Validate | [§B8:S, §B8:T](../threat-model.md) — every container image must have a valid Cosign signature from `https://github.com/<org>/<repo>/.github/workflows/<workflow>.yml@refs/heads/main` |
-| `disallow-paymob-log-mode-in-prod` | Validate | Top-risk #1 — reject any Pod with env var `PAYMOB_MODE=log` outside the `dev` namespace |
+| `disallow-paymob-log-mode-in-prod` | Validate | Top-risk #1 — reject any Pod with env var `PAYMOB_MODE=log` outside the `dev` namespace. Named after the Ahoy incident's exact vector; the workload exposes the same footgun deliberately ([ADR-006](006-workload-go-shim.md)) so this policy refuses a real misconfiguration at admission. |
 | `disallow-privileged-containers` | Validate | [§B8:E](../threat-model.md) — reject Pods with `securityContext.privileged: true` |
 | `disallow-host-namespaces` | Validate | [§B8:E](../threat-model.md) — reject `hostNetwork`, `hostPID`, `hostIPC` |
 | `disallow-hostpath-volumes` | Validate | [§B8:E](../threat-model.md) — reject `hostPath` volume mounts |
