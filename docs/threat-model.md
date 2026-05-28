@@ -27,7 +27,7 @@ Stated explicitly because a threat model is only as defensible as its assumption
 
 ## Assets
 
-What an attacker would want from Ahoy, grounded in the real codebase at `/home/ibrahim/study/ahoy`.
+What an attacker would want from Ahoy, grounded in the real Ahoy codebase.
 
 ### A1. Customer PII
 
