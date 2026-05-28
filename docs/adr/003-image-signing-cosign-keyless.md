@@ -6,7 +6,7 @@ Accepted — 2026-05-28.
 
 ## Context
 
-The supply chain is the highest-blast-radius attack surface in this platform ([threat-model.md §B8](../threat-model.md)). Current Ahoy ships images with mutable `:latest` tags and no signing — anyone with registry push permission can replace a production image, and the cluster has no way to detect the substitution.
+The supply chain is the highest-blast-radius attack surface in this platform ([threat-model.md §B8](../threat-model.md)). The Ahoy-incident-state baseline used mutable `:latest` tags and no signing — anyone with registry push permission could replace a production image, and the cluster had no way to detect the substitution.
 
 The platform needs a cryptographic binding between the GitHub Actions workflow run that built an image and the image bytes themselves, verifiable at admission time without trusting the registry as authority. This ADR picks the signing mechanism; [ADR-004](004-admission-policy-kyverno.md) picks the verification mechanism. They must be designed together.
 
@@ -52,7 +52,7 @@ Verification (in [ADR-004](004-admission-policy-kyverno.md)) matches the expecte
 **Negative.**
 
 - **Dependency on sigstore SaaS** (Fulcio + Rekor) at sign time. If sigstore is down, builds cannot sign. Mitigation: documented break-glass procedure (manual approval of an unsigned image deployment, with explicit non-repudiation by a named human). Self-hosted sigstore is an option later if scale or sovereignty justifies it.
-- **Public Rekor log.** Every signing event — including the OIDC subject (which encodes repo path and branch) — is publicly visible. For Ahoy this is acceptable; for a project with proprietary repo paths or strict commercial confidentiality, self-hosted Rekor would be required.
+- **Public Rekor log.** Every signing event — including the OIDC subject (which encodes repo path and branch) — is publicly visible. For this platform's `ahoy-app` repo this is acceptable; for a project with proprietary repo paths or strict commercial confidentiality, self-hosted Rekor would be required.
 - **Verifier policies are richer than "trust this public key."** Matching the OIDC issuer + subject pattern is a small upfront cost in policy authoring — but it's also what makes the binding meaningful.
 - **Cosign verification requires connectivity** (to Rekor for inclusion proofs) by default. Offline verification is possible with cached proofs; ADR-004's verifier configuration must address this.
 

@@ -1,23 +1,23 @@
 # Service Level Objectives
 
-This document defines the SLIs and SLOs that the rest of the Ahoy platform design protects. Targets are anchored on the [problem statement](problem-statement.md) and apply at projected post-Series-A scale: ~5k orders/day at peak, six MENA cities, ~25 engineers.
+This document defines the SLIs and SLOs that the rest of the platform design protects. Targets are anchored on the [problem statement](problem-statement.md) and apply at the projected post-Series-A scale that motivated the platform: ~5k orders/day at peak, six MENA cities, ~25 engineers. The workload exhibiting these SLO surfaces is defined in [ADR-006](adr/006-workload-go-shim.md).
 
 ## Critical user journeys
 
 Two CUJs are in scope for Phase 1. Both have direct revenue impact and span multiple services, so per-service SLOs would not capture the failure modes that matter.
 
-- **CUJ-1: Order placement** — from `POST /orders` at the storefront ingress through inventory hold, payment-intent creation, and order persistence, ending at the confirmation response to the client.
-- **CUJ-2: Payment-webhook-to-ledger reconciliation** — from receipt of a Paymob webhook at the backend webhook endpoint to a committed double-entry ledger record reflecting the payment.
+- **CUJ-1: Order placement** — from `POST /api/v1/orders` at the ingress through validation, payment-intent creation against the payments-provider mock, and order persistence, ending at the confirmation response to the client. Handled by the `orderd` service.
+- **CUJ-2: Payment-webhook-to-ledger reconciliation** — from receipt of a payments-provider webhook (modeled on Paymob, the provider whose backlog incident motivated this CUJ) at the backend webhook endpoint to a committed ledger record reflecting the payment. The synchronous receipt happens in `orderd`; the asynchronous commit happens in `reconcilerd` after the broker dequeue.
 
-Operator order fulfillment (dashboard pick/pack/ship) and customer order tracking are deliberately not under SLO in Phase 1. Both matter, but their failure modes don't burn revenue per minute the way the two CUJs above do. They will be re-evaluated after a quarter of production data.
+Other workload paths (operator fulfillment, customer order tracking) are deliberately not under SLO in Phase 1. They matter at real product scale but don't burn revenue per minute the way the two CUJs above do, and the workload doesn't model them per [ADR-006 §Out of scope](adr/006-workload-go-shim.md). They will be re-evaluated after a quarter of production data.
 
 ## SLIs and SLOs
 
 ### CUJ-1: Order placement
 
-**SLI (availability):** the ratio of `POST /orders` requests at the ingress that return HTTP 2xx within 400ms, excluding 4xx client errors (invalid payload, auth failures, idempotency-key conflicts), measured in 1-minute windows.
+**SLI (availability):** the ratio of `POST /api/v1/orders` requests at the ingress that return HTTP 2xx within 400ms, excluding 4xx client errors (invalid payload, auth failures, idempotency-key conflicts), measured in 1-minute windows.
 
-**SLI (latency):** the p99 of `POST /orders` end-to-end latency at the ingress, measured per 1-minute window.
+**SLI (latency):** the p99 of `POST /api/v1/orders` end-to-end latency at the ingress, measured per 1-minute window.
 
 **SLO:**
 - 99.5% availability over rolling 30 days.
@@ -34,16 +34,16 @@ Operator order fulfillment (dashboard pick/pack/ship) and customer order trackin
 
 ### CUJ-2: Payment-webhook-to-ledger reconciliation
 
-**SLI (timeliness):** the ratio of Paymob webhook events whose corresponding ledger entry is committed within 60 seconds of webhook receipt at the backend webhook endpoint. Measured per 1-minute window across the queue-processing pipeline (webhook handler → Celery enqueue → worker → DB transaction commit).
+**SLI (timeliness):** the ratio of payments-provider webhook events whose corresponding ledger entry is committed within 60 seconds of webhook receipt at the backend webhook endpoint. Measured per 1-minute window across the queue-processing pipeline (`orderd` webhook handler → broker enqueue → `reconcilerd` dequeue → DB transaction commit).
 
 **SLO:** 99.9% over rolling 30 days.
 
 **Error budget:** 0.1% × 30 days = **~43 minutes/month** of allowed budget burn.
 
 **Rationale:**
-- *Why tighter (99.9%) than CUJ-1.* Each unreconciled webhook is a customer who has paid but sees `PENDING`. The cost asymmetry is severe: the customer can't safely retry payment (risk of double-charge), every stuck webhook generates a support ticket, and the ledger reconciliation has to be done by hand against the gateway. The Paymob near-miss in the problem statement was exactly this: 200 stuck webhooks × ~$25 ≈ $5k stuck revenue plus 200 support escalations in 90 minutes.
-- *Why 60 seconds.* Below 30s leaves no headroom for queue backoff under normal load spikes; above 5 minutes a customer refreshes and assumes the page is broken, then contacts support — generating the load the SLO is meant to prevent. 60s matches the typical "page must be wrong" customer threshold while leaving room for Celery retry budget.
-- *Why 99.9% is feasible.* Webhook ingestion is stateless and idempotent (X-Idempotency-Key on the gateway side). The dominant failure mode is queue backlog, not compute — solvable with worker autoscaling and a dead-letter queue. 99.9% is achievable with attention to those mechanisms; 99.99% would require synchronous in-request ledger commits, which defeats the queue's purpose.
+- *Why tighter (99.9%) than CUJ-1.* Each unreconciled webhook is a customer who has paid but sees `PENDING`. The cost asymmetry is severe: the customer can't safely retry payment (risk of double-charge), every stuck webhook generates a support ticket, and the ledger reconciliation has to be done by hand against the gateway. The Paymob near-miss documented in the problem statement was exactly this: 200 stuck webhooks × ~$25 ≈ $5k stuck revenue plus 200 support escalations in 90 minutes. The Go workload's `orderd` → broker → `reconcilerd` path is the structural analogue built so the SLO is testable.
+- *Why 60 seconds.* Below 30s leaves no headroom for queue backoff under normal load spikes; above 5 minutes a customer refreshes and assumes the page is broken, then contacts support — generating the load the SLO is meant to prevent. 60s matches the typical "page must be wrong" customer threshold while leaving room for worker retry budget.
+- *Why 99.9% is feasible.* Webhook ingestion is stateless and idempotent (transaction-id-keyed on the gateway side). The dominant failure mode is queue backlog, not compute — solvable with worker autoscaling and a dead-letter queue. 99.9% is achievable with attention to those mechanisms; 99.99% would require synchronous in-request ledger commits, which defeats the queue's purpose.
 - *Re-evaluation trigger.* Re-evaluate after one quarter of production data; tighten only if budget consistently runs under 25%.
 
 ## Alerting policy
@@ -60,11 +60,11 @@ Both windows must be over threshold simultaneously — this is what prevents fal
 
 **On-call routing:**
 - CUJ-1 → backend on-call (weekly rotation, ~5 engineers).
-- CUJ-2 → backend on-call, with platform on-call as escalation when the failure is in queue infrastructure (Celery worker, Redis broker).
+- CUJ-2 → backend on-call, with platform on-call as escalation when the failure is in queue infrastructure (`reconcilerd`, Redis broker).
 - Escalation: primary doesn't ack in 5 min → secondary; secondary doesn't ack in 10 min → engineering manager.
 - Tool: PagerDuty (covered by a separate ADR).
 
-**Every page must have a runbook.** Pages without runbooks are tickets. Example for CUJ-2: (1) check Paymob status page, (2) check Celery queue depth in Grafana, (3) check dead-letter queue, (4) `replay-webhooks.sh --since 1h` if backlog confirmed, (5) escalate to platform on-call if Celery is unresponsive.
+**Every page must have a runbook.** Pages without runbooks are tickets. Example for CUJ-2: (1) check payments-provider status page, (2) check broker queue depth in Grafana, (3) check dead-letter queue, (4) `replay-webhooks.sh --since 1h` if backlog confirmed, (5) escalate to platform on-call if `reconcilerd` is unresponsive.
 
 **Error budget policy:**
 - < 50% budget remaining → no risky deploys or infra changes during peak windows.

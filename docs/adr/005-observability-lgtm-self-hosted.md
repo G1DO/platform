@@ -6,7 +6,7 @@ Accepted — 2026-05-28.
 
 ## Context
 
-The platform's observability stack is load-bearing for the SLO commitments in [slos.md](../slos.md) — burn-rate alerts on CUJ-1 (order placement) and CUJ-2 (payment-webhook-to-ledger reconciliation) are measured by this stack, and Phase 5's automated rollback on SLO regression queries the same metrics store. Current Ahoy's CloudWatch-only setup is explicitly named as inadequate in [problem-statement.md](../problem-statement.md).
+The platform's observability stack is load-bearing for the SLO commitments in [slos.md](../slos.md) — burn-rate alerts on CUJ-1 (order placement) and CUJ-2 (payment-webhook-to-ledger reconciliation) are measured by this stack, and Phase 5's automated rollback on SLO regression queries the same metrics store. The Ahoy-incident-state baseline (CloudWatch-only) is explicitly named as inadequate in [problem-statement.md](../problem-statement.md).
 
 The choice here is not "which backend" in isolation; it is whether to operate the stack ourselves (self-hosted OSS) or pay a SaaS vendor (Datadog, Honeycomb, Grafana Cloud, New Relic). The cost question is real at projected Series-A scale; the lock-in question is real for a CV-piece project.
 
@@ -14,7 +14,7 @@ Constraints driving this decision:
 
 - **SLO measurement and burn-rate alerting** ([slos.md](../slos.md)): metrics with reliable retention, queryable for multi-window multi-burn-rate rules. CUJs are measured at the ingress, not the application — the stack must scrape there.
 - **Logs with trace IDs** for incident-correlation workflows ("from a paged alert to the offending request in two clicks").
-- **Distributed tracing** across FastAPI → Celery → Postgres for CUJ-2 reconciliation debugging.
+- **Distributed tracing** across `orderd` → broker → `reconcilerd` → Postgres for CUJ-2 reconciliation debugging.
 - **PII safety** ([threat-model.md §B5:I](../threat-model.md)) — telemetry collection cannot become a new PII exfiltration path.
 - **kind-compatible** ([ADR-001](001-local-cluster-kind.md)) — local dev runs the same stack.
 - **Cost.** This is a CV-piece project. SaaS observability at Series-A volumes is real money ($30–60k/year at this scale, depending on vendor and event volume). The platform thesis is "reliability with proof," not "reliability via vendor."
@@ -38,7 +38,7 @@ All five components are CNCF projects; the four backend components are designed 
 - **Honeycomb.** Best-in-class for high-cardinality observability and traces. Phenomenal product, particularly for "the question I didn't know to ask before the incident." Rejected as **primary** for the same SaaS-cost reason as Datadog. Worth revisiting as a **complement** if traces become the central debugging story and the OSS Tempo experience proves insufficient; introducing two observability backends doubles operational surface, so this is a deliberate "not yet."
 - **New Relic / Dynatrace.** Commercial, lock-in, expensive. No compelling differentiator for a Kubernetes-native platform.
 - **Grafana Cloud (managed LGTM).** Identical query languages to self-hosted LGTM → **zero lock-in**. Rejected as primary on cost at scale, but **available as a fallback**. The same Grafana dashboards, the same PromQL/LogQL/TraceQL — the migration cost from self-hosted LGTM to Grafana Cloud is "change the remote-write target and the data source URL." This is the platform's escape hatch if operational burden becomes the bottleneck.
-- **AWS-native (CloudWatch + X-Ray).** Rejected. CloudWatch is the current Ahoy state, explicitly called out in [problem-statement.md](../problem-statement.md) as inadequate (no metrics beyond log-based, no SLO tracking, no burn-rate alerting). X-Ray is acceptable but the integration is AWS-cloud-specific in ways that contradict the Kubernetes-native platform thesis and the kind-local-dev constraint.
+- **AWS-native (CloudWatch + X-Ray).** Rejected. CloudWatch was the Ahoy-incident-state baseline, explicitly called out in [problem-statement.md](../problem-statement.md) as inadequate (no metrics beyond log-based, no SLO tracking, no burn-rate alerting). X-Ray is acceptable but the integration is AWS-cloud-specific in ways that contradict the Kubernetes-native platform thesis and the kind-local-dev constraint.
 - **Mimir instead of Prometheus.** Rejected for Phase 1. Mimir is for horizontal scaling beyond a single Prometheus's capacity. At 5k orders/day with reasonable cardinality, a single Prometheus handles the workload with headroom. Adding Mimir adds operational complexity for a problem we don't have. Re-evaluate at 10× volume.
 
 ## Consequences
@@ -61,7 +61,7 @@ All five components are CNCF projects; the four backend components are designed 
 **Follow-up work this commits us to.**
 
 - Phase 4 ships the full stack via Helm charts (or kube-prometheus-stack / loki-stack / tempo distributions), version-pinned in the config repo.
-- **PII-scrubbing pipeline in OTel Collector** — `attributes` processor with explicit deny-list for known PII fields (email, phone, address, lat/lon per [threat-model.md §A1](../threat-model.md)). Closes [§B5:I](../threat-model.md).
+- **PII-scrubbing pipeline in OTel Collector** — `attributes` processor with explicit deny-list for the workload's known PII fields (`customer_email`, `customer_phone`, `delivery_address`, `payment_card_last4` per [threat-model.md §A1](../threat-model.md)). Closes [§B5:I](../threat-model.md).
 - Retention policy per signal:
   - Metrics: 30 days hot, 1 year downsampled (Prometheus + recording rules).
   - Logs: 14 days hot, 90 days cold on S3 (Loki object-store backend).
